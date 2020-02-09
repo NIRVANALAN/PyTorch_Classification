@@ -34,6 +34,7 @@ def load_pil(img, shape=None):
 
 
 def retrieve_imgs(subclass_root_dir, split_list, dataset_list, label):
+    subclass_datalist = []
     for slide_collection in split_list:
         current_path = subclass_root_dir.joinpath(slide_collection)
         for slide in os.listdir(current_path):
@@ -45,10 +46,19 @@ def retrieve_imgs(subclass_root_dir, split_list, dataset_list, label):
                         imgs = os.listdir(sub_area_path)
                         imgs = [
                             f'{str(sub_area_path.joinpath(img))} {label}\n' for img in imgs]
-                        dataset_list.extend(imgs)
+                        subclass_datalist.extend(imgs)
+
+    dataset_list.append(subclass_datalist)
 
 
-def generate_list(root_dir, test_size=0.3):
+def flatten(l, cut): return [
+    item for sublist in l for item in sublist[:cut]]  # * interesting
+
+
+def shuffle(l): return random.shuffle(l)
+
+
+def generate_list(root_dir, test_size=0.3, unit=1.5e4):
     train_list = []
     test_list = []
     for subclass in range(len(category)):
@@ -58,7 +68,13 @@ def generate_list(root_dir, test_size=0.3):
         test_split, train_split = patients[-test_list_len:], patients[:-test_list_len]
         retrieve_imgs(current_path, train_split, train_list, subclass)
         retrieve_imgs(current_path, test_split, test_list, subclass)
-    random.shuffle(train_list), random.shuffle(test_list)
+
+    for sublist in train_list + test_list:
+        shuffle(sublist)
+
+    import pdb
+    pdb.set_trace()
+    train_list, test_list = flatten(train_list, unit), flatten(test_list, unit)
     with open('train_list.txt', 'w') as train_img_list:
         train_img_list.writelines(train_list)
     with open('test_list.txt', 'w') as train_img_list:

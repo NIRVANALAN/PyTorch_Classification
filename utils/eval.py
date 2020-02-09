@@ -1,6 +1,7 @@
 from __future__ import print_function, absolute_import
+from sklearn.metrics import f1_score
 
-__all__ = ['accuracy']
+__all__ = ['accuracy', 'f1']
 
 def accuracy(output, target, topk=(1,)):
     """Computes the precision@k for the specified values of k"""
@@ -16,3 +17,8 @@ def accuracy(output, target, topk=(1,)):
         correct_k = correct[:k].view(-1).float().sum(0)
         res.append(correct_k.mul_(100.0 / batch_size))
     return res
+
+def f1(output, target):
+    output, target = output.cpu(), target.cpu()
+    pred = output.max(1)[1]
+    return f1_score(target, pred, average='macro'), f1_score(target, pred, average='micro')
