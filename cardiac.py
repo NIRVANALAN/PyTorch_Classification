@@ -12,7 +12,6 @@ import random
 import pdb
 
 
-
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -23,11 +22,12 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import models.cifar as models
 
-from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
+from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig, f1
 from utils.cardiac_datasets import CardiacDataset
 
 from torchvision.models import resnet50
 
+# from sklearn.metrics import f1_score
 
 model_names = sorted(name for name in models.__dict__
                      if name.islower() and not name.startswith("__")
@@ -38,19 +38,19 @@ parser = argparse.ArgumentParser(description='PyTorch CIFAR10/100 Training')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
 # Optimization options
-parser.add_argument('--epochs', default=300, type=int, metavar='N',
+parser.add_argument('--epochs', default=50, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('--train-batch', default=32, type=int, metavar='N',
+parser.add_argument('--train-batch', default=60, type=int, metavar='N',
                     help='train batchsize')
-parser.add_argument('--test-batch', default=64, type=int, metavar='N',
+parser.add_argument('--test-batch', default=60, type=int, metavar='N',
                     help='test batchsize')
 parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate')
 parser.add_argument('--drop', '--dropout', default=0, type=float,
                     metavar='Dropout', help='Dropout ratio')
-parser.add_argument('--schedule', type=int, nargs='+', default=[150, 225],
+parser.add_argument('--schedule', type=int, nargs='+', default=[15, 25],
                     help='Decrease learning rate at these epochs.')
 parser.add_argument('--gamma', type=float, default=0.1,
                     help='LR is multiplied by gamma on schedule.')
@@ -87,6 +87,9 @@ parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
 # Device options
 parser.add_argument('--gpu-id', default='3,4', type=str,
                     help='id(s) for CUDA_VISIBLE_DEVICES')
+# Pretrain
+parser.add_argument('--pt', help='use pretrain of Resnet?',
+                    action='store_true')
 
 args = parser.parse_args()
 state = {k: v for k, v in args._get_kwargs()}
@@ -148,8 +151,8 @@ def main():
         testset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers)
     num_classes = 4
     # Model
-    print("==> creating model '{}'".format('resnet50'))
-    model = resnet50(pretrained=False, num_classes=num_classes)
+    print("==> creating model '{}', pretrained: {}".format('resnet50', args.pt))
+    model = resnet50(pretrained=args.pt, num_classes=num_classes)
     print(model)
     print(f'CUDA DEVICES: {torch.cuda.device_count()}')
     model = torch.nn.DataParallel(model).cuda()
@@ -230,7 +233,8 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
     data_time = AverageMeter()
     losses = AverageMeter()
     top1 = AverageMeter()
-    top2 = AverageMeter()
+    micro_f1 = AverageMeter()
+    macro_f1 = AverageMeter()
     end = time.time()
 
     bar = Bar('Processing', max=len(trainloader))
@@ -248,11 +252,13 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
         loss = criterion(outputs, targets)
 
         # measure accuracy and record loss
-        prec1, prec2 = accuracy(outputs.data, targets.data, topk=(1, 2))
+        prec1, _ = accuracy(outputs.data, targets.data, topk=(1, 2))
         # odb.set_trace()
         losses.update(loss.item(), inputs.size(0))
         top1.update(prec1.item(), inputs.size(0))
-        top2.update(prec2.item(), inputs.size(0))
+        _macrof1, _microf1 = f1(outputs.data, targets.data)
+        micro_f1.update(_microf1, inputs.size(0))
+        macro_f1.update(_macrof1, inputs.size(0))
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -264,7 +270,7 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
         end = time.time()
 
         # plot progress
-        bar.suffix = '({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | top1: {top1: .4f} | top2: {top2: .4f}'.format(
+        bar.suffix = '({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | top1: {top1: .4f} | micro: {micro: .4f} | macro: {macro: .4f}'.format(
             batch=batch_idx + 1,
             size=len(trainloader),
             data=data_time.avg,
@@ -273,7 +279,8 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
             eta=bar.eta_td,
             loss=losses.avg,
             top1=top1.avg,
-            top2=top2.avg,
+            micro=micro_f1.avg,
+            macro=macro_f1.avg,
         )
         bar.next()
     bar.finish()
@@ -287,7 +294,8 @@ def test(testloader, model, criterion, epoch, use_cuda):
     data_time = AverageMeter()
     losses = AverageMeter()
     top1 = AverageMeter()
-    top2 = AverageMeter()
+    micro_f1 = AverageMeter()
+    macro_f1 = AverageMeter()
 
     # switch to evaluate mode
     model.eval()
@@ -309,17 +317,19 @@ def test(testloader, model, criterion, epoch, use_cuda):
             loss = criterion(outputs, targets)
 
             # measure accuracy and record loss
-            prec1, prec2 = accuracy(outputs.data, targets.data, topk=(1, 2))
+            prec1, _ = accuracy(outputs.data, targets.data, topk=(1, 2))
+            _macrof1, _microf1 = f1(outputs.data, targets.data)
             losses.update(loss.item(), inputs.size(0))
             top1.update(prec1.item(), inputs.size(0))
-            top2.update(prec2.item(), inputs.size(0))
+            micro_f1.update(_microf1, inputs.size(0))
+            macro_f1.update(_macrof1, inputs.size(0))
 
             # measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
 
             # plot progress
-            bar.suffix = '({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | top1: {top1: .4f} | top2: {top2: .4f}'.format(
+            bar.suffix = '({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | top1: {top1: .4f} | micro: {micro: .4f} | macro: {macro: .4f}'.format(
                 batch=batch_idx + 1,
                 size=len(testloader),
                 data=data_time.avg,
@@ -328,7 +338,8 @@ def test(testloader, model, criterion, epoch, use_cuda):
                 eta=bar.eta_td,
                 loss=losses.avg,
                 top1=top1.avg,
-                top2=top2.avg,
+                micro=micro_f1.avg,
+                macro=macro_f1.avg,
             )
             bar.next()
         bar.finish()
