@@ -145,7 +145,7 @@ def main():
     trainloader = data.DataLoader(
         trainset, batch_size=args.train_batch, shuffle=True, num_workers=args.workers)
 
-    testset = CardiacDataset(datalist='test_list.txt',
+    testset = CardiacDataset(datalist='new_test_list.txt',
                              transform=transform_test)
     testloader = data.DataLoader(
         testset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers)

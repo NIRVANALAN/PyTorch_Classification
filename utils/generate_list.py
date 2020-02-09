@@ -51,8 +51,8 @@ def retrieve_imgs(subclass_root_dir, split_list, dataset_list, label):
     dataset_list.append(subclass_datalist)
 
 
-def flatten(l, cut): return [
-    item for sublist in l for item in sublist[:cut]]  # * interesting
+def flatten(l): return [
+    item for sublist in l for item in sublist[:]]  # * interesting
 
 
 def shuffle(l): return random.shuffle(l)
@@ -72,12 +72,10 @@ def generate_list(root_dir, test_size=0.3, unit=1.5e4):
     for sublist in train_list + test_list:
         shuffle(sublist)
 
-    import pdb
-    pdb.set_trace()
-    train_list, test_list = flatten(train_list, unit), flatten(test_list, unit)
-    with open('train_list.txt', 'w') as train_img_list:
-        train_img_list.writelines(train_list)
-    with open('test_list.txt', 'w') as train_img_list:
+    train_list, test_list = flatten(train_list), flatten(test_list)
+    # with open('train_list.txt', 'w') as train_img_list:
+    #     train_img_list.writelines(train_list)
+    with open('new_test_list.txt', 'w') as train_img_list:
         train_img_list.writelines(test_list)
 
 
